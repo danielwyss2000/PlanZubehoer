@@ -5,25 +5,28 @@ Name des Plug-ins:
 Plan Zubehoer
 
 Version:
-0.10.0
+0.20.0
 
 Was macht dieses Plug-in?
 - Stellt eine dauerhaft andockbare Web-Palette fuer Vectorworks 2026 bereit.
-- Liest Zubehoerressourcen aus dem aktiven Dokument.
-- Liest die Resource-Tags und erkennt Plan-* Tags.
-- Zeigt Symbole, Schraffuren, Materialien, Linienarten und weitere
-  Zubehoertypen gemeinsam in einer gefilterten Liste.
-- Die eigentliche Filterung nach Plan, Zubehoertyp und Suchtext erfolgt
-  sofort in der Palette.
+- Liest Zubehoerressourcen aus dem aktiven Dokument und erkennt Plan-* Tags.
+- Filtert planbezogen ueber alle unterstuetzten Zubehoertypen hinweg.
+- Unterstuetzt direkte, sichere Standardaktionen per Doppelklick bzw. "Verwenden":
+  * normale 2D-/3D-/Hybridsymbole: als aktives Symbol setzen und Symbol-Werkzeug starten.
+  * Schraffuren, Bildfuellungen, Farbverlaeufe und Mosaike: als aktuelle Fuellung setzen.
+  * Linienarten: als aktuelle Linienart setzen.
+- Andere Zubehoertypen werden weiterhin gefunden und angezeigt, aber nicht automatisch
+  veraendert, solange keine eindeutige, dokumentierte Standardaktion existiert.
 
 Was ist zu beachten?
 - Dieses Projekt ist fuer das Vectorworks SDK 2026 unter Windows aufgebaut.
 - Es muss mit Visual Studio 2022 / Toolset v143 kompiliert werden.
-- Vectorworks 2026 SDK-Plug-ins benoetigen die von Vectorworks vorgesehenen
-  Entwickler-Zugangsdaten bzw. die Satellite-Credentials-Datei.
-- Version 0.10.0 arbeitet absichtlich nur mit dem aktiven Dokument.
-- Das Plug-in ist in dieser Version lesend; es veraendert keine Tags und
-  keine Zubehoerressourcen.
+- Vectorworks 2026 SDK-Plug-ins benoetigen die vorgesehene Entwickler-Credentials-Datei.
+- Das Plug-in arbeitet mit dem aktiven Dokument.
+- Direkte Aktionen werden nur fuer dokumentiert eindeutig behandelbare Ressourcentypen
+  ausgefuehrt. Objektstile werden bewusst nicht als normale Symbole eingesetzt.
+- Das Setzen von Fuellung/Linienart aendert die aktuellen Vorgabeattribute fuer neu
+  erzeugte Objekte; bestehende Objekte werden nicht stillschweigend veraendert.
 
 Welche Parameter koennen geaendert werden?
 - kResourceSpecs in ExtPlanZubehoer.cpp: unterstuetzte Zubehoertypen.
@@ -49,6 +52,11 @@ namespace PlanZubehoer
 
     private:
         void OnGetSnapshot(const TXString& objName,
+                           const TXString& functionName,
+                           const std::vector<nlohmann::json>& args,
+                           VectorWorks::UI::IJSFunctionCallbackContext* context);
+
+        void OnUseResource(const TXString& objName,
                            const TXString& functionName,
                            const std::vector<nlohmann::json>& args,
                            VectorWorks::UI::IJSFunctionCallbackContext* context);
