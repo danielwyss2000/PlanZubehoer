@@ -3,7 +3,7 @@ name: Build PlanZubehoer for Vectorworks 2026
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, v020-direct-actions ]
     paths:
       - 'PlanZubehoer/**'
       - '.github/workflows/build-vectorworks-2026.yml'
