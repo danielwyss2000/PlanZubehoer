@@ -13,9 +13,6 @@ using namespace PlanZubehoer;
 namespace
 {
     constexpr const char* kPluginVersion = "0.20.0";
-
-    // Interne Vectorworks-Werkzeug-Selektoren gemaess Script Reference:
-    // -209 = 2D-Symbol-Werkzeug, -309 = 3D-Symbol-Werkzeug.
     constexpr short kTool2DSymbol = -209;
     constexpr short kTool3DSymbol = -309;
 
@@ -51,7 +48,7 @@ namespace
     struct SDirectAction
     {
         std::string fCode;
-        bool        fEnabled = false;
+        bool fEnabled = false;
     };
 
     std::string ToUTF8(const TXString& value)
@@ -80,7 +77,6 @@ namespace
     {
         std::vector<TXString> reversed;
         std::set<std::uintptr_t> visited;
-
         MCObjectHandle current = gSDK->ParentObject(h);
 
         for (size_t depth = 0; depth < 64 && IsResourceContainer(current); ++depth)
@@ -90,7 +86,6 @@ namespace
                 break;
 
             visited.insert(key);
-
             TXString name = GetObjectNameSafe(current);
             if (!name.IsEmpty())
                 reversed.push_back(name);
@@ -131,8 +126,8 @@ namespace
 
         if (objectType == kSymDefNode)
         {
-            // Intelligente Objektstile liegen ebenfalls als Symboldefinitionen vor.
-            // Diese duerfen nicht wie normale Symbole eingesetzt werden.
+            // Intelligente Objektstile sind ebenfalls Symboldefinitionen und werden
+            // bewusst nicht wie normale Symbole eingesetzt.
             if (gSDK->GetSymbolDefSubType(h) > 0)
             {
                 result.fCode = "object-style";
@@ -167,13 +162,13 @@ namespace
 
     struct SCollectedResource
     {
-        MCObjectHandle         fHandle = nullptr;
-        TXString               fName;
-        std::set<std::string>  fTypes;
-        TXStringArray          fTags;
-        std::vector<TXString>  fPath;
-        short                  fObjectType = 0;
-        SDirectAction          fAction;
+        MCObjectHandle fHandle = nullptr;
+        TXString fName;
+        std::set<std::string> fTypes;
+        TXStringArray fTags;
+        std::vector<TXString> fPath;
+        short fObjectType = 0;
+        SDirectAction fAction;
     };
 
     std::map<std::uintptr_t, SCollectedResource> CollectResources()
@@ -271,8 +266,7 @@ namespace
         if (index > 0)
             index = -index;
 
-        VWObjectAttr defaults;
-        defaults.SetFillPattern(VWPattern(index, true));
+        gSDK->SetDefaultFillPat(index);
         return true;
     }
 
@@ -288,8 +282,7 @@ namespace
         if (index > 0)
             index = -index;
 
-        VWObjectAttr defaults;
-        defaults.SetPenPattern(VWPattern(index, false));
+        gSDK->SetDefaultPenPatN(index);
         return true;
     }
 
@@ -307,9 +300,7 @@ namespace
         short insertMode = kSymbolToolRegularInsert;
         gSDK->SetProgramVariable(varSymbolToolInsertMode, &insertMode);
 
-        const short toolIndex = symbol.GetType() == kSymbolDefType_3D
-                              ? kTool3DSymbol
-                              : kTool2DSymbol;
+        const short toolIndex = symbol.GetType() == kSymbolDefType_3D ? kTool3DSymbol : kTool2DSymbol;
         gSDK->SetToolByIndex(toolIndex);
         return true;
     }
@@ -332,7 +323,6 @@ CPaletteJSProvider::~CPaletteJSProvider()
 void CPaletteJSProvider::OnInit(IInitContext* context)
 {
     fWebFrame = context->GetWebFrame();
-
     context->AddReourceAccessFunction("vwAPI", DefaultPluginVWRIdentifier());
     context->AddFunctionPromiseSync("vwAPI.getSnapshot");
     context->AddFunctionPromiseSync("vwAPI.useResource");
@@ -353,7 +343,6 @@ void CPaletteJSProvider::OnGetSnapshot(const TXString& objName,
     result["resources"] = nlohmann::json::array();
 
     const auto resources = CollectResources();
-
     for (const auto& pair : resources)
     {
         const SCollectedResource& source = pair.second;
@@ -419,7 +408,6 @@ void CPaletteJSProvider::OnUseResource(const TXString& objName,
     }
 
     bool success = false;
-
     if (actualAction.fCode == "insert-symbol")
         success = ActivateSymbolForInsertion(h);
     else if (actualAction.fCode == "set-fill")
@@ -466,7 +454,6 @@ bool CExtPlanZubehoer::GetMinimalSize(ViewCoord& outCX, ViewCoord& outCY)
     return true;
 }
 
-// Projekt-eigene UUID: {7055984D-57CA-433D-B8C8-3545B33D984E}
 IMPLEMENT_VWPaletteExtension(
     CExtPlanZubehoer,
     "STT.PlanZubehoer.Palette",
@@ -485,7 +472,6 @@ static SMenuDef gMenuDef = {
     " "
 };
 
-// Projekt-eigene UUID: {B4C113C1-9DA4-4364-AD1F-61C13B31E744}
 IMPLEMENT_VWMenuExtension(
     CExtMenuShowPlanZubehoer,
     CExtMenuShowPlanZubehoer_EventSink,
