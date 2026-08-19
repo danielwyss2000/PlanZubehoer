@@ -7,6 +7,11 @@ on:
     paths:
       - 'PlanZubehoer/**'
       - '.github/workflows/build-vectorworks-2026.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'PlanZubehoer/**'
+      - '.github/workflows/build-vectorworks-2026.yml'
 
 jobs:
   build-windows:
