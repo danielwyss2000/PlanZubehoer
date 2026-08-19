@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="de">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Plan Zubeh&ouml;r</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <main class="app-shell">
+        <header class="app-header">
+            <div>
+                <h1>PLAN ZUBEH&Ouml;R</h1>
+                <p id="sourceLabel">Aktives Dokument</p>
+            </div>
+            <button id="refreshButton" class="icon-button" type="button" title="Aktualisieren" aria-label="Aktualisieren">&#8635;</button>
+        </header>
+
+        <section class="filters" aria-label="Filter">
+            <label>
+                <span>Plan</span>
+                <select id="planSelect"></select>
+            </label>
+
+            <label>
+                <span>Zubeh&ouml;rtyp</span>
+                <select id="typeSelect"></select>
+            </label>
+
+            <label class="search-label">
+                <span>Suche</span>
+                <input id="searchInput" type="search" autocomplete="off" placeholder="Name, Tag oder Ordner">
+            </label>
+        </section>
+
+        <section class="result-meta">
+            <strong id="resultCount">0 Treffer</strong>
+            <span id="activePlanLabel"></span>
+        </section>
+
+        <section class="table-wrap" aria-label="Zubehoerressourcen">
+            <table>
+                <thead>
+                    <tr>
+                        <th class="type-col">Zubeh&ouml;rtyp</th>
+                        <th>Name</th>
+                        <th class="path-col">Ordner</th>
+                    </tr>
+                </thead>
+                <tbody id="resultBody"></tbody>
+            </table>
+            <div id="emptyState" class="empty-state" hidden>
+                Keine passenden Zubeh&ouml;rressourcen gefunden.
+            </div>
+        </section>
+
+        <footer class="footer">
+            <span id="versionLabel">v0.10.0</span>
+            <span id="statusLabel"></span>
+        </footer>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

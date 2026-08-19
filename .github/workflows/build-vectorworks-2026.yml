@@ -1,0 +1,76 @@
+name: Build PlanZubehoer for Vectorworks 2026
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'PlanZubehoer/**'
+      - '.github/workflows/build-vectorworks-2026.yml'
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout plugin repository
+        uses: actions/checkout@v4
+
+      - name: Checkout official Vectorworks SDK examples
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/VectorworksDeveloper/SDKExamples.git sdk-root
+
+      - name: Copy PlanZubehoer into SDKExamples structure
+        shell: pwsh
+        run: |
+          $dest = 'sdk-root\Examples2026\PlanZubehoer'
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Copy-Item -Path 'PlanZubehoer\*' -Destination $dest -Recurse -Force
+
+      - name: Locate MSBuild
+        id: msbuild
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { throw 'vswhere.exe not found.' }
+          $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\MSBuild.exe | Select-Object -First 1
+          if (-not $msbuild) { throw 'MSBuild.exe not found.' }
+          "path=$msbuild" >> $env:GITHUB_OUTPUT
+          Write-Host "MSBuild: $msbuild"
+
+      - name: Build Release x64
+        shell: pwsh
+        working-directory: sdk-root/Examples2026/PlanZubehoer
+        run: |
+          & '${{ steps.msbuild.outputs.path }}' 'PlanZubehoer2026.sln' /m /p:Configuration=Release /p:Platform=x64 /verbosity:minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Find build outputs
+        id: outputs
+        shell: pwsh
+        run: |
+          $outRoot = 'sdk-root\Output\2026\_Output\Release'
+          if (-not (Test-Path $outRoot)) { throw "Output folder not found: $outRoot" }
+
+          $vlb = Get-ChildItem -Path $outRoot -Filter 'PlanZubehoer.vlb' -Recurse | Select-Object -First 1
+          $vwr = Get-ChildItem -Path $outRoot -Filter 'PlanZubehoer.vwr' -Recurse | Select-Object -First 1
+
+          if (-not $vlb) { throw 'PlanZubehoer.vlb was not generated.' }
+          if (-not $vwr) { throw 'PlanZubehoer.vwr was not generated.' }
+
+          New-Item -ItemType Directory -Force -Path 'artifact\PlanZubehoer' | Out-Null
+          Copy-Item $vlb.FullName 'artifact\PlanZubehoer\PlanZubehoer.vlb' -Force
+          Copy-Item $vwr.FullName 'artifact\PlanZubehoer\PlanZubehoer.vwr' -Force
+
+          Write-Host "VLB: $($vlb.FullName)"
+          Write-Host "VWR: $($vwr.FullName)"
+
+      - name: Upload ready-to-install plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: PlanZubehoer-Vectorworks2026-Windows
+          path: artifact/PlanZubehoer
+          if-no-files-found: error
+          retention-days: 30

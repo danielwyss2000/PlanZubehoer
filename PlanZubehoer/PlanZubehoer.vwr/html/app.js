@@ -1,0 +1,396 @@
+"use strict";
+
+/*
+Name des Frontends:
+Plan Zubehoer Web-Palette
+
+Was macht dieses Script?
+- Empfaengt die Zubehoerressourcen des aktiven Vectorworks-Dokuments.
+- Erkennt Plan-* Tags automatisch.
+- Ermittelt lesbare Plannamen aus der Zubehoer-Ordnerhierarchie.
+- Filtert nach Plan, Zubehoertyp und Suchtext ohne erneuten SDK-Aufruf.
+
+Was ist zu beachten?
+- Der C++-Teil liefert nur Daten des aktiven Dokuments.
+- Ohne Vectorworks-Bridge startet die Datei mit kleinen Demo-Daten, damit
+  die Oberflaeche im Browser kontrolliert werden kann.
+
+Welche Parameter koennen geaendert werden?
+- PLAN_TAG_PREFIX: Praefix fuer Plan-Tags.
+- KNOWN_PLAN_NAMES: feste Anzeigenamen, falls keine Ordnerableitung gewuenscht ist.
+- STORAGE_KEY: Speichername fuer die zuletzt gewaehlten Filter.
+*/
+
+const PLAN_TAG_PREFIX = "Plan-";
+const STORAGE_KEY = "STT.PlanZubehoer.v010";
+
+const KNOWN_PLAN_NAMES = {
+    "plan-08": "08 - Contractor Plan",
+    "plan-cl": "Ceiling Lighting Plan",
+    "plan-ml": "Millwork Lighting Plan",
+    "plan-el": "Electrical Plan"
+};
+
+const TYPE_LABELS = {
+    "Renderworks-Hintergruende": "Renderworks-Hintergr\u00fcnde",
+    "Bildfuellungen": "Bildf\u00fcllungen",
+    "Farbverlaeufe": "Farbverl\u00e4ufe"
+};
+
+const state = {
+    resources: [],
+    plans: [],
+    selectedPlan: "",
+    selectedType: "Alle",
+    search: "",
+    isDemo: false,
+    version: "0.10.0"
+};
+
+const ui = {};
+
+function norm(value) {
+    return String(value ?? "").trim().toLocaleLowerCase("de-CH");
+}
+
+function escapeRegExp(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isPlanTag(tag) {
+    return norm(tag).startsWith(norm(PLAN_TAG_PREFIX));
+}
+
+function resourceHasPlan(resource, planTag) {
+    const wanted = norm(planTag);
+    return (resource.tags || []).some(tag => norm(tag) === wanted);
+}
+
+function displayType(type) {
+    return TYPE_LABELS[type] || type;
+}
+
+function pathString(resource) {
+    const parts = Array.isArray(resource.pathParts) ? resource.pathParts : [];
+    return parts.length ? parts.join(" / ") : "oberste Ebene";
+}
+
+function derivePlanName(planTag, resources) {
+    const key = norm(planTag);
+    if (KNOWN_PLAN_NAMES[key]) {
+        return KNOWN_PLAN_NAMES[key];
+    }
+
+    const suffix = String(planTag).slice(PLAN_TAG_PREFIX.length).trim();
+    const numeric = suffix.match(/^\d{2}$/);
+
+    if (numeric) {
+        const pattern = new RegExp("^" + escapeRegExp(suffix) + "\\s*-\\s*(.*?\\bPlan\\b)", "i");
+
+        for (const resource of resources) {
+            if (!resourceHasPlan(resource, planTag)) continue;
+
+            for (const folder of (resource.pathParts || [])) {
+                const match = String(folder).match(pattern);
+                if (match) {
+                    return suffix + " - " + match[1].trim();
+                }
+            }
+        }
+    }
+
+    return suffix || planTag;
+}
+
+function collectPlans(resources) {
+    const byKey = new Map();
+
+    for (const resource of resources) {
+        for (const tag of (resource.tags || [])) {
+            if (!isPlanTag(tag)) continue;
+            const key = norm(tag);
+            if (!byKey.has(key)) byKey.set(key, tag);
+        }
+    }
+
+    return Array.from(byKey.values())
+        .map(tag => ({ tag, label: derivePlanName(tag, resources) }))
+        .sort((a, b) => a.label.localeCompare(b.label, "de-CH", { numeric: true, sensitivity: "base" }));
+}
+
+function collectTypes(resources, planTag) {
+    const types = new Set();
+
+    for (const resource of resources) {
+        if (planTag && !resourceHasPlan(resource, planTag)) continue;
+        for (const type of (resource.types || [])) types.add(type);
+    }
+
+    return Array.from(types).sort((a, b) => displayType(a).localeCompare(displayType(b), "de-CH", { sensitivity: "base" }));
+}
+
+function loadSavedState() {
+    try {
+        const data = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+        state.selectedPlan = String(data.selectedPlan || "");
+        state.selectedType = String(data.selectedType || "Alle");
+        state.search = String(data.search || "");
+    }
+    catch (err) {
+        console.warn("Filterzustand konnte nicht geladen werden", err);
+    }
+}
+
+function saveState() {
+    try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+            selectedPlan: state.selectedPlan,
+            selectedType: state.selectedType,
+            search: state.search
+        }));
+    }
+    catch (err) {
+        console.warn("Filterzustand konnte nicht gespeichert werden", err);
+    }
+}
+
+function ensureValidSelections() {
+    const availablePlanKeys = new Set(state.plans.map(plan => norm(plan.tag)));
+
+    if (!state.selectedPlan || !availablePlanKeys.has(norm(state.selectedPlan))) {
+        const preferred = state.plans.find(plan => norm(plan.tag) === "plan-08");
+        state.selectedPlan = preferred ? preferred.tag : (state.plans[0]?.tag || "");
+    }
+
+    const availableTypes = new Set(collectTypes(state.resources, state.selectedPlan));
+    if (state.selectedType !== "Alle" && !availableTypes.has(state.selectedType)) {
+        state.selectedType = "Alle";
+    }
+}
+
+function rebuildPlanSelect() {
+    ui.planSelect.innerHTML = "";
+
+    if (!state.plans.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "Keine Plan-Tags gefunden";
+        ui.planSelect.append(option);
+        ui.planSelect.disabled = true;
+        return;
+    }
+
+    ui.planSelect.disabled = false;
+    for (const plan of state.plans) {
+        const option = document.createElement("option");
+        option.value = plan.tag;
+        option.textContent = plan.label;
+        ui.planSelect.append(option);
+    }
+
+    ui.planSelect.value = state.selectedPlan;
+}
+
+function rebuildTypeSelect() {
+    const types = collectTypes(state.resources, state.selectedPlan);
+    ui.typeSelect.innerHTML = "";
+
+    const all = document.createElement("option");
+    all.value = "Alle";
+    all.textContent = "Alle";
+    ui.typeSelect.append(all);
+
+    for (const type of types) {
+        const option = document.createElement("option");
+        option.value = type;
+        option.textContent = displayType(type);
+        ui.typeSelect.append(option);
+    }
+
+    ui.typeSelect.value = state.selectedType;
+}
+
+function filteredResources() {
+    const q = norm(state.search);
+
+    return state.resources
+        .filter(resource => resourceHasPlan(resource, state.selectedPlan))
+        .filter(resource => state.selectedType === "Alle" || (resource.types || []).includes(state.selectedType))
+        .filter(resource => {
+            if (!q) return true;
+
+            const haystack = [
+                resource.name,
+                pathString(resource),
+                ...(resource.tags || []),
+                ...(resource.types || []).map(displayType)
+            ].join(" ");
+
+            return norm(haystack).includes(q);
+        })
+        .sort((a, b) => {
+            const typeA = displayType((a.types || [""])[0] || "");
+            const typeB = displayType((b.types || [""])[0] || "");
+            const byType = typeA.localeCompare(typeB, "de-CH", { sensitivity: "base" });
+            if (byType !== 0) return byType;
+            return String(a.name).localeCompare(String(b.name), "de-CH", { numeric: true, sensitivity: "base" });
+        });
+}
+
+function renderTable() {
+    const resources = filteredResources();
+    ui.resultBody.innerHTML = "";
+
+    const fragment = document.createDocumentFragment();
+
+    for (const resource of resources) {
+        const row = document.createElement("tr");
+
+        const typeCell = document.createElement("td");
+        typeCell.className = "type-cell";
+        typeCell.textContent = (resource.types || []).map(displayType).join(", ");
+
+        const nameCell = document.createElement("td");
+        nameCell.className = "name-cell";
+
+        const name = document.createElement("div");
+        name.textContent = resource.name || "<Zubeh\u00f6r ohne Namen>";
+        nameCell.append(name);
+
+        const tagBadge = document.createElement("span");
+        tagBadge.className = "plan-tag";
+        tagBadge.textContent = state.selectedPlan;
+        nameCell.append(tagBadge);
+
+        const pathCell = document.createElement("td");
+        pathCell.className = "path-cell";
+        pathCell.textContent = pathString(resource);
+
+        row.append(typeCell, nameCell, pathCell);
+        fragment.append(row);
+    }
+
+    ui.resultBody.append(fragment);
+    ui.emptyState.hidden = resources.length !== 0;
+    ui.resultCount.textContent = resources.length + (resources.length === 1 ? " Treffer" : " Treffer");
+
+    const activePlan = state.plans.find(plan => norm(plan.tag) === norm(state.selectedPlan));
+    ui.activePlanLabel.textContent = activePlan ? activePlan.label : "";
+}
+
+function render() {
+    ensureValidSelections();
+    rebuildPlanSelect();
+    rebuildTypeSelect();
+    ui.searchInput.value = state.search;
+    renderTable();
+    saveState();
+}
+
+function demoSnapshot() {
+    return {
+        version: "0.10.0",
+        source: "demo",
+        count: 6,
+        resources: [
+            { name: "Boden - Filler 17 mm [11/16\"]", types: ["Boden-/Deckenstile"], tags: ["Plan-08"], pathParts: ["08 - Contractor Plan - Boden / Deckenstile", "08.1 - Boden"] },
+            { name: "Decke - Backing ceiling 01", types: ["Boden-/Deckenstile"], tags: ["Plan-08"], pathParts: ["08 - Contractor Plan - Boden / Deckenstile", "08.2 - Decke"] },
+            { name: "Abrieb_MAT", types: ["Materialien"], tags: ["Plan-08"], pathParts: ["08 - Contractor Plan - Materialien"] },
+            { name: "M-01", types: ["Schraffuren"], tags: ["Plan-08", "Plan-23"], pathParts: ["08 - Contractor Plan - Schraffuren"] },
+            { name: "Duplex Outlet", types: ["Symbole/Objektstile"], tags: ["Plan-09"], pathParts: ["09 - Power & DATA Plan - Symbole", "06_Duplex receptacles"] },
+            { name: "Millwork Hardware", types: ["Symbole/Objektstile"], tags: ["Plan-23"], pathParts: ["23 - Millwork Plan - Symbole", "Hardware"] }
+        ]
+    };
+}
+
+async function fetchSnapshot() {
+    ui.refreshButton.disabled = true;
+    ui.statusLabel.textContent = "Lese Zubeh\u00f6r...";
+
+    try {
+        let snapshot;
+
+        if (typeof vwAPI !== "undefined" && typeof vwAPI.getSnapshot === "function") {
+            snapshot = await vwAPI.getSnapshot();
+            state.isDemo = false;
+        }
+        else {
+            snapshot = demoSnapshot();
+            state.isDemo = true;
+        }
+
+        state.resources = Array.isArray(snapshot.resources) ? snapshot.resources : [];
+        state.version = String(snapshot.version || "0.10.0");
+        state.plans = collectPlans(state.resources);
+
+        ui.versionLabel.textContent = "v" + state.version;
+        ui.sourceLabel.textContent = state.isDemo ? "Vorschau ausserhalb Vectorworks" : "Aktives Dokument";
+        ui.statusLabel.textContent = state.resources.length + " Zubeh\u00f6rressourcen gelesen";
+
+        render();
+    }
+    catch (err) {
+        console.error(err);
+        ui.statusLabel.textContent = "Fehler beim Lesen";
+        ui.emptyState.hidden = false;
+        ui.emptyState.textContent = "Zubeh\u00f6rdaten konnten nicht aus Vectorworks gelesen werden.";
+    }
+    finally {
+        ui.refreshButton.disabled = false;
+    }
+}
+
+function bindEvents() {
+    ui.planSelect.addEventListener("change", () => {
+        state.selectedPlan = ui.planSelect.value;
+        state.selectedType = "Alle";
+        render();
+    });
+
+    ui.typeSelect.addEventListener("change", () => {
+        state.selectedType = ui.typeSelect.value;
+        renderTable();
+        saveState();
+    });
+
+    ui.searchInput.addEventListener("input", () => {
+        state.search = ui.searchInput.value;
+        renderTable();
+        saveState();
+    });
+
+    ui.refreshButton.addEventListener("click", fetchSnapshot);
+
+    window.addEventListener("focus", () => {
+        if (!state.isDemo) fetchSnapshot();
+    });
+}
+
+function setupTheme() {
+    if (typeof window.setVectorworksThemeCallback === "function") {
+        window.setVectorworksThemeCallback((isDark) => {
+            document.body.setAttribute("data-color-scheme", isDark ? "dark" : "light");
+        });
+    }
+}
+
+function init() {
+    ui.planSelect = document.getElementById("planSelect");
+    ui.typeSelect = document.getElementById("typeSelect");
+    ui.searchInput = document.getElementById("searchInput");
+    ui.refreshButton = document.getElementById("refreshButton");
+    ui.resultCount = document.getElementById("resultCount");
+    ui.activePlanLabel = document.getElementById("activePlanLabel");
+    ui.resultBody = document.getElementById("resultBody");
+    ui.emptyState = document.getElementById("emptyState");
+    ui.versionLabel = document.getElementById("versionLabel");
+    ui.statusLabel = document.getElementById("statusLabel");
+    ui.sourceLabel = document.getElementById("sourceLabel");
+
+    loadSavedState();
+    setupTheme();
+    bindEvents();
+    fetchSnapshot();
+}
+
+document.addEventListener("DOMContentLoaded", init);
