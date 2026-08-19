@@ -12,13 +12,19 @@ using namespace PlanZubehoer;
 
 namespace
 {
+    constexpr const char* kPluginVersion = "0.20.0";
+
+    // Interne Vectorworks-Werkzeug-Selektoren gemaess Script Reference:
+    // -209 = 2D-Symbol-Werkzeug, -309 = 3D-Symbol-Werkzeug.
+    constexpr short kTool2DSymbol = -209;
+    constexpr short kTool3DSymbol = -309;
+
     struct SResourceSpec
     {
         short       fListType;
         const char* fLabel;
     };
 
-    // Die Typen entsprechen der bereits im Python-Prototyp getesteten Liste.
     static const SResourceSpec kResourceSpecs[] = {
         { 16,  "Symbole/Objektstile" },
         { 18,  "Tabellen/Legenden" },
@@ -41,6 +47,12 @@ namespace
 
     constexpr short kTypeScriptPalette = 51;
     constexpr short kTypeResourceFolder = 92;
+
+    struct SDirectAction
+    {
+        std::string fCode;
+        bool        fEnabled = false;
+    };
 
     std::string ToUTF8(const TXString& value)
     {
@@ -106,13 +118,62 @@ namespace
         return result;
     }
 
+    SDirectAction GetDirectAction(MCObjectHandle h)
+    {
+        SDirectAction result;
+        if (h == nullptr)
+        {
+            result.fCode = "missing";
+            return result;
+        }
+
+        const short objectType = gSDK->GetObjectTypeN(h);
+
+        if (objectType == kSymDefNode)
+        {
+            // Intelligente Objektstile liegen ebenfalls als Symboldefinitionen vor.
+            // Diese duerfen nicht wie normale Symbole eingesetzt werden.
+            if (gSDK->GetSymbolDefSubType(h) > 0)
+            {
+                result.fCode = "object-style";
+                return result;
+            }
+
+            result.fCode = "insert-symbol";
+            result.fEnabled = true;
+            return result;
+        }
+
+        if (objectType == kHatchDefNode ||
+            objectType == kImageDefNode ||
+            objectType == kGradientDefNode ||
+            objectType == kTileDefNode)
+        {
+            result.fCode = "set-fill";
+            result.fEnabled = true;
+            return result;
+        }
+
+        if (objectType == kLineTypeDefNode)
+        {
+            result.fCode = "set-line-type";
+            result.fEnabled = true;
+            return result;
+        }
+
+        result.fCode = "unsupported";
+        return result;
+    }
+
     struct SCollectedResource
     {
-        MCObjectHandle       fHandle = nullptr;
-        TXString             fName;
-        std::set<std::string> fTypes;
-        TXStringArray        fTags;
-        std::vector<TXString> fPath;
+        MCObjectHandle         fHandle = nullptr;
+        TXString               fName;
+        std::set<std::string>  fTypes;
+        TXStringArray          fTags;
+        std::vector<TXString>  fPath;
+        short                  fObjectType = 0;
+        SDirectAction          fAction;
     };
 
     std::map<std::uintptr_t, SCollectedResource> CollectResources()
@@ -136,7 +197,6 @@ namespace
             {
                 MCObjectHandle h = gSDK->GetResourceFromList(listID, index);
 
-                // Fallback ueber den tatsaechlichen Namen, falls eine Liste keinen Handle liefert.
                 if (h == nullptr)
                 {
                     TXString actualName;
@@ -167,13 +227,11 @@ namespace
 
                     gSDK->GetResourceTags(h, item.fTags);
                     if (item.fTags.IsEmpty())
-                    {
-                        // Bei einzelnen Ressourcen liefert die Object-Tag-API dieselben
-                        // Informationen robuster. Nur als lesender Fallback verwenden.
                         gSDK->GetObjectTags(h, item.fTags);
-                    }
 
                     item.fPath = GetContainerPath(h);
+                    item.fObjectType = gSDK->GetObjectTypeN(h);
+                    item.fAction = GetDirectAction(h);
                     it = collected.emplace(key, std::move(item)).first;
                 }
 
@@ -185,10 +243,81 @@ namespace
 
         return collected;
     }
+
+    MCObjectHandle ResolveResource(const TXString& name, short expectedObjectType)
+    {
+        if (name.IsEmpty())
+            return nullptr;
+
+        MCObjectHandle h = gSDK->GetNamedObject(name);
+        if (h == nullptr)
+            return nullptr;
+
+        if (expectedObjectType != 0 && gSDK->GetObjectTypeN(h) != expectedObjectType)
+            return nullptr;
+
+        return h;
+    }
+
+    bool SetResourceAsCurrentFill(MCObjectHandle h)
+    {
+        if (h == nullptr)
+            return false;
+
+        InternalIndex index = gSDK->GetObjectInternalIndex(h);
+        if (index == 0)
+            return false;
+
+        if (index > 0)
+            index = -index;
+
+        VWObjectAttr defaults;
+        defaults.SetFillPattern(VWPattern(index, true));
+        return true;
+    }
+
+    bool SetResourceAsCurrentLineType(MCObjectHandle h)
+    {
+        if (h == nullptr)
+            return false;
+
+        InternalIndex index = gSDK->GetObjectInternalIndex(h);
+        if (index == 0)
+            return false;
+
+        if (index > 0)
+            index = -index;
+
+        VWObjectAttr defaults;
+        defaults.SetPenPattern(VWPattern(index, false));
+        return true;
+    }
+
+    bool ActivateSymbolForInsertion(MCObjectHandle h)
+    {
+        if (h == nullptr || !VWSymbolDefObj::IsSymbolDefObject(h))
+            return false;
+
+        if (gSDK->GetSymbolDefSubType(h) > 0)
+            return false;
+
+        VWSymbolDefObj symbol(h);
+        symbol.SetAsActiveSymbolDef();
+
+        short insertMode = kSymbolToolRegularInsert;
+        gSDK->SetProgramVariable(varSymbolToolInsertMode, &insertMode);
+
+        const short toolIndex = symbol.GetType() == kSymbolDefType_3D
+                              ? kTool3DSymbol
+                              : kTool2DSymbol;
+        gSDK->SetToolByIndex(toolIndex);
+        return true;
+    }
 }
 
 BEGIN_WebPalette_DISPATCH_MAP(CPaletteJSProvider)
 ADD_WebPalette_FUNCTION("getSnapshot", OnGetSnapshot)
+ADD_WebPalette_FUNCTION("useResource", OnUseResource)
 END_WebPalette_DISPATCH_MAP
 
 CPaletteJSProvider::CPaletteJSProvider(IVWUnknown* parent)
@@ -204,11 +333,9 @@ void CPaletteJSProvider::OnInit(IInitContext* context)
 {
     fWebFrame = context->GetWebFrame();
 
-    // Erstellt das vwAPI-Objekt im Web-Frontend und gibt Zugriff auf die
-    // Ressourcen dieses Plug-ins. PromiseSync laeuft im Vectorworks-Hauptthread
-    // und darf daher die SDK-Funktionen fuer das aktive Dokument verwenden.
     context->AddReourceAccessFunction("vwAPI", DefaultPluginVWRIdentifier());
     context->AddFunctionPromiseSync("vwAPI.getSnapshot");
+    context->AddFunctionPromiseSync("vwAPI.useResource");
 }
 
 void CPaletteJSProvider::OnGetSnapshot(const TXString& objName,
@@ -221,7 +348,7 @@ void CPaletteJSProvider::OnGetSnapshot(const TXString& objName,
     (void)args;
 
     nlohmann::json result;
-    result["version"] = "0.10.0";
+    result["version"] = kPluginVersion;
     result["source"] = "active-document";
     result["resources"] = nlohmann::json::array();
 
@@ -235,6 +362,9 @@ void CPaletteJSProvider::OnGetSnapshot(const TXString& objName,
         item["name"] = ToUTF8(source.fName);
         item["tags"] = ToJsonArray(source.fTags);
         item["pathParts"] = ToJsonArray(source.fPath);
+        item["objectType"] = source.fObjectType;
+        item["actionCode"] = source.fAction.fCode;
+        item["actionEnabled"] = source.fAction.fEnabled;
 
         nlohmann::json types = nlohmann::json::array();
         for (const std::string& type : source.fTypes)
@@ -245,6 +375,61 @@ void CPaletteJSProvider::OnGetSnapshot(const TXString& objName,
     }
 
     result["count"] = result["resources"].size();
+    context->Resolve(result);
+}
+
+void CPaletteJSProvider::OnUseResource(const TXString& objName,
+                                       const TXString& functionName,
+                                       const std::vector<nlohmann::json>& args,
+                                       VectorWorks::UI::IJSFunctionCallbackContext* context)
+{
+    (void)objName;
+    (void)functionName;
+
+    nlohmann::json result;
+    result["success"] = false;
+    result["code"] = "invalid-request";
+
+    if (args.empty() || !args[0].is_object())
+    {
+        context->Resolve(result);
+        return;
+    }
+
+    const nlohmann::json& request = args[0];
+    const std::string nameUTF8 = request.value("name", std::string());
+    const short expectedObjectType = static_cast<short>(request.value("objectType", 0));
+    const std::string requestedAction = request.value("actionCode", std::string());
+
+    TXString name(nameUTF8, ETXEncoding::eUTF8);
+    MCObjectHandle h = ResolveResource(name, expectedObjectType);
+    if (h == nullptr)
+    {
+        result["code"] = "resource-not-found";
+        context->Resolve(result);
+        return;
+    }
+
+    const SDirectAction actualAction = GetDirectAction(h);
+    if (!actualAction.fEnabled || actualAction.fCode != requestedAction)
+    {
+        result["code"] = actualAction.fCode.empty() ? "unsupported" : actualAction.fCode;
+        context->Resolve(result);
+        return;
+    }
+
+    bool success = false;
+
+    if (actualAction.fCode == "insert-symbol")
+        success = ActivateSymbolForInsertion(h);
+    else if (actualAction.fCode == "set-fill")
+        success = SetResourceAsCurrentFill(h);
+    else if (actualAction.fCode == "set-line-type")
+        success = SetResourceAsCurrentLineType(h);
+
+    result["success"] = success;
+    result["code"] = success ? actualAction.fCode : "action-failed";
+    result["name"] = nameUTF8;
     context->Resolve(result);
 }
 
@@ -269,19 +454,19 @@ TXString CExtPlanZubehoer::GetTitle()
 
 bool CExtPlanZubehoer::GetInitialSize(ViewCoord& outCX, ViewCoord& outCY)
 {
-    outCX = 520;
+    outCX = 480;
     outCY = 720;
     return true;
 }
 
 bool CExtPlanZubehoer::GetMinimalSize(ViewCoord& outCX, ViewCoord& outCY)
 {
-    outCX = 360;
-    outCY = 420;
+    outCX = 340;
+    outCY = 400;
     return true;
 }
 
-// Neue, projekt-eigene UUID: {7055984D-57CA-433D-B8C8-3545B33D984E}
+// Projekt-eigene UUID: {7055984D-57CA-433D-B8C8-3545B33D984E}
 IMPLEMENT_VWPaletteExtension(
     CExtPlanZubehoer,
     "STT.PlanZubehoer.Palette",
@@ -300,7 +485,7 @@ static SMenuDef gMenuDef = {
     " "
 };
 
-// Neue, projekt-eigene UUID: {B4C113C1-9DA4-4364-AD1F-61C13B31E744}
+// Projekt-eigene UUID: {B4C113C1-9DA4-4364-AD1F-61C13B31E744}
 IMPLEMENT_VWMenuExtension(
     CExtMenuShowPlanZubehoer,
     CExtMenuShowPlanZubehoer_EventSink,
