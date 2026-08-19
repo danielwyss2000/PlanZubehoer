@@ -21,12 +21,10 @@
                 <span>Plan</span>
                 <select id="planSelect"></select>
             </label>
-
             <label>
                 <span>Zubeh&ouml;rtyp</span>
                 <select id="typeSelect"></select>
             </label>
-
             <label class="search-label">
                 <span>Suche</span>
                 <input id="searchInput" type="search" autocomplete="off" placeholder="Name, Tag oder Ordner">
@@ -49,17 +47,22 @@
                 </thead>
                 <tbody id="resultBody"></tbody>
             </table>
-            <div id="emptyState" class="empty-state" hidden>
-                Keine passenden Zubeh&ouml;rressourcen gefunden.
+            <div id="emptyState" class="empty-state" hidden>Keine passenden Zubeh&ouml;rressourcen gefunden.</div>
+        </section>
+
+        <section class="action-bar">
+            <div class="action-copy">
+                <strong id="selectionLabel">Keine Ressource ausgew&auml;hlt</strong>
+                <span id="actionStatus" data-kind="info">Ressource markieren oder doppelklicken.</span>
             </div>
+            <button id="useButton" class="primary-button" type="button" disabled>Verwenden</button>
         </section>
 
         <footer class="footer">
-            <span id="versionLabel">v0.10.0</span>
+            <span id="versionLabel">v0.20.0</span>
             <span id="statusLabel"></span>
         </footer>
     </main>
-
     <script src="app.js"></script>
 </body>
 </html>
